@@ -124,7 +124,18 @@ fn build_palette(
     // anti-aliased edges into sliver layers that fragment the strokes.
     let k = match opts.k {
         Some(k) => k,
-        None => detail_k(class, opts.detail).min((effective.max(2)) as u16),
+        None => {
+            let target = detail_k(class, opts.detail);
+            // A photo's subtle tones live in the long tail, so capping it to the
+            // dominant-color count would band the shading. Only flat art (logos,
+            // simple illustrations) gets capped, where over-quantizing would turn
+            // anti-aliased edges into sliver layers.
+            if class == Class::Photo {
+                target
+            } else {
+                target.min((effective.max(2)) as u16)
+            }
+        }
     };
     quantize::quantize(colors, k)
 }

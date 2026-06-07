@@ -27,11 +27,29 @@ pub fn quantize(colors: &[Oklab], k: u16) -> Vec<Oklab> {
     if colors.is_empty() {
         return Vec::new();
     }
-    let target = (k.max(1) as usize).min(colors.len());
+    // Build the palette from a bounded, evenly-strided sample. On a large photo
+    // this keeps the box split and Lloyd passes fast without changing the
+    // palette meaningfully; every pixel is mapped to the result later in
+    // `map_to_palette`. Striding keeps it deterministic.
+    let sample = sample_colors(colors);
+    let target = (k.max(1) as usize).min(sample.len());
 
-    let boxes = split_boxes(colors, target);
+    let boxes = split_boxes(&sample, target);
     let seeds: Vec<Oklab> = boxes.iter().map(|b| b.centroid).collect();
-    refine(colors, seeds)
+    refine(&sample, seeds)
+}
+
+/// Upper bound on how many colors the palette search runs over. The box split
+/// is roughly O(k * n log n) and Lloyd is O(iters * n * k), so bounding n keeps
+/// a multi-megapixel photo fast.
+const SAMPLE_CAP: usize = 20_000;
+
+fn sample_colors(colors: &[Oklab]) -> Vec<Oklab> {
+    if colors.len() <= SAMPLE_CAP {
+        return colors.to_vec();
+    }
+    let stride = colors.len() / SAMPLE_CAP;
+    colors.iter().step_by(stride).copied().collect()
 }
 
 /// Snap to a caller-provided sRGB palette: just convert it to OKLab. Mapping
@@ -215,6 +233,28 @@ mod tests {
         let a = quantize(&colors, 8);
         let b = quantize(&colors, 8);
         assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.l.to_bits(), y.l.to_bits());
+            assert_eq!(x.a.to_bits(), y.a.to_bits());
+            assert_eq!(x.b.to_bits(), y.b.to_bits());
+        }
+    }
+
+    #[test]
+    fn large_input_samples_deterministically() {
+        // More colors than SAMPLE_CAP, so the strided sample path runs.
+        let colors: Vec<Oklab> = (0..60_000)
+            .map(|i| {
+                from_srgb(
+                    (i % 256) as u8,
+                    ((i * 5) % 256) as u8,
+                    ((i * 11) % 256) as u8,
+                )
+            })
+            .collect();
+        let a = quantize(&colors, 32);
+        let b = quantize(&colors, 32);
+        assert_eq!(a.len(), 32);
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(x.l.to_bits(), y.l.to_bits());
             assert_eq!(x.a.to_bits(), y.a.to_bits());

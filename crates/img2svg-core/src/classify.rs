@@ -22,8 +22,10 @@ const COVERAGE: f32 = 0.93;
 
 /// Few real colors + crisp edges reads as a logo / flat mark.
 const LOGO_MAX_COLORS: usize = 6;
-/// Many real colors + dense edges reads as photographic.
-const PHOTO_MIN_COLORS: usize = 48;
+/// Enough real colors that the image is photographic / richly shaded rather
+/// than a flat mark. Photos and colorful captures land here and earn a large
+/// palette; near-flat art (logos, mono terminals) stays well below it.
+const PHOTO_MIN_COLORS: usize = 24;
 
 /// Sobel gradient magnitude above this (on a 0..~1448 scale) counts as an edge
 /// pixel. 48 is a low bar that still rejects flat-color noise.
@@ -40,7 +42,9 @@ pub fn classify(rgba: &[u8], width: u32, height: u32, effective: usize) -> Class
 
     if few_colors && sharp_edges {
         Class::Logo
-    } else if many_colors && sharp_edges {
+    } else if many_colors {
+        // Rich color implies continuous shading (a photo) rather than flat art,
+        // regardless of how crisp the edges are.
         Class::Photo
     } else {
         Class::Illustration
