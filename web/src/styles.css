@@ -51,6 +51,7 @@ body {
   min-height: 0;
   display: grid;
   grid-template-columns: 320px 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 1.5rem;
   align-items: stretch;
 }
@@ -411,6 +412,7 @@ body {
 .editor {
   display: grid;
   grid-template-columns: 1fr 360px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 1rem;
   height: 100vh;
   padding: 1rem;
@@ -443,6 +445,7 @@ body {
 
 .editor__canvas {
   min-width: 0;
+  min-height: 0;
   display: flex;
 }
 
@@ -453,8 +456,7 @@ body {
 
 .editor__canvas .panzoom__viewport {
   flex: 1;
-  min-height: 400px;
-  height: 100%;
+  min-height: 0;
   /* Checkerboard so transparency stays visible behind the layers. */
   background:
     repeating-conic-gradient(#1b1f27 0% 25%, #232833 0% 50%) 50% / 24px 24px;
