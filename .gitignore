@@ -1,0 +1,39 @@
+# Rust / Cargo build output
+/target
+**/target/
+
+# wasm-pack output
+**/pkg/
+
+# Node
+node_modules/
+web/dist/
+*.log
+npm-debug.log*
+
+# Environment and secrets
+.env
+.env.*
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors and local tooling
+.idea/
+.vscode/
+
+# AI assistant artifacts
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.aider.conf.yml
+.continue/
+.windsurf/
+.copilot/
+CLAUDE.md
+AGENTS.md
+scratch/
+_ai/
+*.prompt.md
