@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useStore } from "./store";
 import { Dropzone } from "./components/Dropzone";
 import { Controls } from "./components/Controls";
@@ -5,11 +6,23 @@ import { BeforeAfterSlider } from "./components/BeforeAfterSlider";
 import { LayerPreview } from "./components/LayerPreview";
 import { StatsBar } from "./components/StatsBar";
 import { ExportButtons } from "./components/ExportButtons";
+import { Editor } from "./components/Editor";
 
-export function App() {
+function useHashRoute(): string {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return hash;
+}
+
+function Home() {
   const status = useStore((s) => s.status);
   const error = useStore((s) => s.error);
   const hasSource = useStore((s) => s.source !== null);
+  const hasResult = useStore((s) => s.result !== null);
 
   return (
     <div className="app">
@@ -24,6 +37,16 @@ export function App() {
           <Controls />
           <StatsBar />
           <ExportButtons />
+          <button
+            type="button"
+            className="app__editor-link"
+            disabled={!hasResult}
+            onClick={() => {
+              window.location.hash = "#/editor";
+            }}
+          >
+            Open advanced editor
+          </button>
           {status === "processing" && <p className="app__status">Tracing…</p>}
           {status === "error" && error && <p className="app__error">{error}</p>}
         </section>
@@ -37,4 +60,12 @@ export function App() {
       </main>
     </div>
   );
+}
+
+export function App() {
+  const hash = useHashRoute();
+  if (hash === "#/editor") {
+    return <Editor />;
+  }
+  return <Home />;
 }
