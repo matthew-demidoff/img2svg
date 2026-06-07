@@ -10,7 +10,7 @@ function toCoreOptions(o: Options): Record<string, unknown> {
   const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   return {
     class_override: o.classOverride === "auto" ? null : capitalize(o.classOverride),
-    k: null,
+    k: o.colorCount === "auto" ? null : o.colorCount,
     lock_palette: null,
     bw_mode: o.blackAndWhite,
     photo_mode: "Posterize",

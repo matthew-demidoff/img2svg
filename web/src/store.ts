@@ -21,8 +21,14 @@ interface StoreState {
   error: string | null;
   setSource: (file: File) => Promise<void>;
   setOptions: (patch: Partial<Options>) => void;
+  /** Update options now but coalesce the re-trace; for dragged controls. */
+  setOptionsDebounced: (patch: Partial<Options>) => void;
   trace: () => Promise<void>;
 }
+
+const TRACE_DEBOUNCE_MS = 220;
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function measure(file: File): Promise<{ width: number; height: number }> {
   const bitmap = await createImageBitmap(file);
@@ -54,10 +60,29 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   setOptions(patch) {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
     set((state) => ({ options: { ...state.options, ...patch } }));
     if (get().source) {
       void get().trace();
     }
+  },
+
+  setOptionsDebounced(patch) {
+    set((state) => ({ options: { ...state.options, ...patch } }));
+    if (!get().source) {
+      return;
+    }
+    set({ status: "processing" });
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+    }
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void get().trace();
+    }, TRACE_DEBOUNCE_MS);
   },
 
   async trace() {

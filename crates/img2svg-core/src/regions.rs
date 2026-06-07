@@ -6,12 +6,30 @@
 //! is repainted with the dominant palette index along its border, so no holes
 //! are introduced.
 
-/// Components with at most this many pixels are absorbed into a neighbour.
-const DEFAULT_MIN_REGION: usize = 4;
+/// Min-region size range. Low detail merges components up to the larger
+/// threshold for clean flat output; high detail keeps regions as small as the
+/// floor so fine features survive.
+const MIN_REGION_HIGH_DETAIL: usize = 1;
+const MIN_REGION_LOW_DETAIL: usize = 8;
 
-/// Merge sub-threshold connected components into their bordering color.
-/// `indices` is row-major palette indices; returns a cleaned copy.
-pub fn despeckle(indices: &[usize], width: u32, height: u32, palette_len: usize) -> Vec<usize> {
+/// Map `detail` in [0,1] to a min-region size: more detail -> smaller threshold
+/// so tiny regions survive. Deterministic for a given detail.
+pub fn detail_min_region(detail: f32) -> usize {
+    let t = detail.clamp(0.0, 1.0);
+    let span = (MIN_REGION_LOW_DETAIL - MIN_REGION_HIGH_DETAIL) as f32;
+    MIN_REGION_LOW_DETAIL - (span * t).round() as usize
+}
+
+/// Merge connected components with at most `min_region` pixels into their
+/// bordering color. `indices` is row-major palette indices; returns a cleaned
+/// copy.
+pub fn despeckle(
+    indices: &[usize],
+    width: u32,
+    height: u32,
+    palette_len: usize,
+    min_region: usize,
+) -> Vec<usize> {
     if indices.is_empty() || palette_len == 0 {
         return indices.to_vec();
     }
@@ -60,7 +78,7 @@ pub fn despeckle(indices: &[usize], width: u32, height: u32, palette_len: usize)
 
     let mut out = indices.to_vec();
     for pixels in &components {
-        if pixels.len() > DEFAULT_MIN_REGION {
+        if pixels.len() > min_region {
             continue;
         }
         if let Some(replacement) = dominant_border_color(&out, &labels, pixels, w, h) {

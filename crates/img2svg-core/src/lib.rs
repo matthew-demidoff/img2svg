@@ -23,11 +23,13 @@ pub use options::{Class, Options, PhotoMode};
 
 use serde::{Deserialize, Serialize};
 
-/// Default palette sizes when the caller does not pin `k`. Logos are flat and
-/// want few colors; photos posterize to more.
-const LOGO_DEFAULT_K: u16 = 8;
-const ILLUSTRATION_DEFAULT_K: u16 = 16;
-const PHOTO_DEFAULT_K: u16 = 32;
+/// Palette-size range per class, interpolated by `detail` when the caller does
+/// not pin `k`. The low end is a clean flat trace; the high end keeps enough
+/// colors for fine shading. Photos reach a high count so maximum detail can
+/// survive (research: logo 2..16, illustration 8..64, photo 24..256).
+const LOGO_K_RANGE: (u16, u16) = (2, 16);
+const ILLUSTRATION_K_RANGE: (u16, u16) = (8, 64);
+const PHOTO_K_RANGE: (u16, u16) = (24, 256);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceResult {
@@ -56,7 +58,8 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
         .class_override
         .unwrap_or_else(|| classify::classify(rgba, width, height));
 
-    let cleaned = preclean::preclean(rgba, width, height, class);
+    let detail = opts.detail.clamp(0.0, 1.0);
+    let cleaned = preclean::preclean(rgba, width, height, class, detail);
 
     let (colors, pixel_index) = emit::opaque_oklab(&cleaned);
     let palette = build_palette(&colors, class, opts);
@@ -72,6 +75,7 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
             height,
             palette.len(),
             rgba,
+            detail,
         );
         emit::apply_palette(&cleaned, &palette, &pixel_index, &assignment)
     };
@@ -83,7 +87,7 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
         palette.len().max(1),
     );
 
-    let svg = trace::trace_color(&quantized, width, height, class)?;
+    let svg = trace::trace_color(&quantized, width, height, class, detail)?;
     let stats = Stats {
         path_count: emit::count_paths(&svg),
         palette: emit::palette_hex(&palette),
@@ -108,17 +112,30 @@ fn build_palette(colors: &[oklab::Oklab], class: Class, opts: &Options) -> Vec<o
     if let Some(locked) = &opts.lock_palette {
         return quantize::lock_to_palette(locked);
     }
-    let k = opts.k.unwrap_or(match class {
-        Class::Logo => LOGO_DEFAULT_K,
-        Class::Illustration => ILLUSTRATION_DEFAULT_K,
-        Class::Photo => PHOTO_DEFAULT_K,
-    });
+    // An explicit `k` is the colors control and wins outright; otherwise detail
+    // interpolates the per-class range.
+    let k = opts.k.unwrap_or_else(|| detail_k(class, opts.detail));
     quantize::quantize(colors, k)
+}
+
+/// Interpolate the palette size from `detail` across the class range. `detail`
+/// is clamped to [0,1] and the result rounds to the nearest integer so the same
+/// detail always yields the same K (deterministic).
+fn detail_k(class: Class, detail: f32) -> u16 {
+    let (lo, hi) = match class {
+        Class::Logo => LOGO_K_RANGE,
+        Class::Illustration => ILLUSTRATION_K_RANGE,
+        Class::Photo => PHOTO_K_RANGE,
+    };
+    let t = detail.clamp(0.0, 1.0);
+    let span = (hi - lo) as f32;
+    lo + (span * t).round() as u16
 }
 
 /// Run despeckle over a full-resolution index map. Transparent pixels get a
 /// sentinel index so connectivity does not cross them, then we read back only
-/// the opaque positions.
+/// the opaque positions. `detail` shrinks the min-region threshold so tiny
+/// regions survive at high detail.
 fn despeckle_assignment(
     assignment: &[usize],
     pixel_index: &[usize],
@@ -126,6 +143,7 @@ fn despeckle_assignment(
     height: u32,
     palette_len: usize,
     rgba: &[u8],
+    detail: f32,
 ) -> Vec<usize> {
     let total = (width as usize) * (height as usize);
     // Sentinel keeps transparent pixels in their own components.
@@ -135,7 +153,8 @@ fn despeckle_assignment(
         full[pixel] = entry;
     }
 
-    let cleaned = regions::despeckle(&full, width, height, palette_len + 1);
+    let min_region = regions::detail_min_region(detail);
+    let cleaned = regions::despeckle(&full, width, height, palette_len + 1, min_region);
 
     pixel_index
         .iter()

@@ -209,16 +209,88 @@ body {
   gap: 1rem;
 }
 
-.layers__svg {
-  width: 100%;
-  background: repeating-conic-gradient(#1b1f27 0% 25%, #232833 0% 50%) 50% / 24px 24px;
-  border-radius: 8px;
+.panzoom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.layers__svg svg {
+.panzoom__viewport {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  background: repeating-conic-gradient(#1b1f27 0% 25%, #232833 0% 50%) 50% / 24px 24px;
+  touch-action: none;
+  cursor: zoom-in;
+}
+
+.panzoom__viewport--grab {
+  cursor: grab;
+}
+
+.panzoom__viewport--grab:active {
+  cursor: grabbing;
+}
+
+.panzoom__content {
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.panzoom__content svg {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.panzoom__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.panzoom__controls button {
+  min-width: 32px;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.panzoom__level {
+  margin-left: auto;
+}
+
+.layers__header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.layers__title {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.layers__showall {
+  margin-left: auto;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.layers__showall:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .layers__list {
@@ -237,6 +309,10 @@ body {
   font-size: 0.85rem;
 }
 
+.layers__item--off {
+  opacity: 0.45;
+}
+
 .layers__swatch {
   width: 16px;
   height: 16px;
@@ -247,4 +323,24 @@ body {
 .layers__count {
   margin-left: auto;
   color: var(--muted);
+}
+
+.layers__toggle,
+.layers__solo {
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.layers__toggle {
+  min-width: 44px;
+}
+
+.layers__toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
 }

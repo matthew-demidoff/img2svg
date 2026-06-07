@@ -8,9 +8,14 @@ export type ClassOverride = "auto" | ImageClass;
 
 export type PhotoMode = "posterize" | "gradient";
 
+/** Exact palette size, or "auto" to let detail choose. */
+export type ColorCount = "auto" | number;
+
 export interface Options {
   /** 0..1, higher keeps more detail at the cost of larger output. */
   fidelity: number;
+  /** Number of colors to quantize to, or "auto" to derive from detail. */
+  colorCount: ColorCount;
   /** Force a tracing strategy, or let the core detect the image class. */
   classOverride: ClassOverride;
   /** Quantize only to colors present in the source rather than a derived palette. */
@@ -49,6 +54,7 @@ export interface TraceResult {
 
 export const defaultOptions: Options = {
   fidelity: 0.6,
+  colorCount: "auto",
   classOverride: "auto",
   lockToSourcePalette: false,
   photoMode: "posterize",
