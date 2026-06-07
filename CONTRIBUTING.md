@@ -31,7 +31,7 @@ cargo test --all
 WebAssembly build:
 
 ```
-wasm-pack build crates/img2svg-core --target web -- --features wasm
+wasm-pack build crates/img2svg-core --target web --out-dir ../../web/src/wasm/pkg -- --features wasm
 ```
 
 Web app:

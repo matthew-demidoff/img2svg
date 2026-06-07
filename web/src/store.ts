@@ -1,8 +1,7 @@
 import { create } from "zustand";
-import * as Comlink from "comlink";
 import type { Options, TraceResult } from "./wasm/coreTypes";
 import { defaultOptions } from "./wasm/coreTypes";
-import type { TraceWorker } from "./worker/trace.worker";
+import { runTrace } from "./lib/pipeline";
 
 export type Status = "idle" | "processing" | "done" | "error";
 
@@ -23,18 +22,6 @@ interface StoreState {
   setSource: (file: File) => Promise<void>;
   setOptions: (patch: Partial<Options>) => void;
   trace: () => Promise<void>;
-}
-
-let workerProxy: Comlink.Remote<TraceWorker> | null = null;
-
-function worker(): Comlink.Remote<TraceWorker> {
-  if (!workerProxy) {
-    const instance = new Worker(new URL("./worker/trace.worker.ts", import.meta.url), {
-      type: "module",
-    });
-    workerProxy = Comlink.wrap<TraceWorker>(instance);
-  }
-  return workerProxy;
 }
 
 async function measure(file: File): Promise<{ width: number; height: number }> {
@@ -80,8 +67,8 @@ export const useStore = create<StoreState>((set, get) => ({
     }
     set({ status: "processing", error: null });
     try {
-      const result = await worker().run(source.file, options);
-      // Discard the result if the source changed while we were tracing.
+      const result = await runTrace(source.file, options);
+      // Drop the result if the source changed while we were tracing.
       if (get().source?.file !== source.file) {
         return;
       }
@@ -90,12 +77,10 @@ export const useStore = create<StoreState>((set, get) => ({
       if (get().source?.file !== source.file) {
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      set({ status: "error", error: message });
+      set({
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   },
 }));
-
-export function getWorker(): Comlink.Remote<TraceWorker> {
-  return worker();
-}

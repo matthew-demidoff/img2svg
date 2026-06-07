@@ -49,6 +49,13 @@ raster-embed fallback is defined but inactive.
 
 ## Building and running for development
 
+For a one-command setup, run `./run.sh`. It installs the Rust toolchain, the
+wasm32 target, wasm-pack, and the web dependencies, builds the WebAssembly core,
+and starts the dev server. Use `./run.sh --build` to preview a production build
+or `./run.sh --test` to run the Rust tests.
+
+To do it by hand instead:
+
 Prerequisites:
 
 - Rust, installed via [rustup](https://rustup.rs/), with the
@@ -62,7 +69,7 @@ Prerequisites:
 Build the WebAssembly package from the core crate:
 
 ```
-wasm-pack build crates/img2svg-core --target web -- --features wasm
+wasm-pack build crates/img2svg-core --target web --out-dir ../../web/src/wasm/pkg -- --features wasm
 ```
 
 The `--features wasm` flag is required: the JavaScript bindings are gated behind

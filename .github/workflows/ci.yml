@@ -51,7 +51,7 @@ jobs:
         uses: jetli/wasm-pack-action@v0.4.0
 
       - name: Build wasm package
-        run: wasm-pack build crates/img2svg-core --target web -- --features wasm
+        run: wasm-pack build crates/img2svg-core --target web --out-dir ../../web/src/wasm/pkg -- --features wasm
 
   web:
     name: Web app
@@ -67,7 +67,7 @@ jobs:
         uses: jetli/wasm-pack-action@v0.4.0
 
       - name: Build wasm package
-        run: wasm-pack build crates/img2svg-core --target web -- --features wasm
+        run: wasm-pack build crates/img2svg-core --target web --out-dir ../../web/src/wasm/pkg -- --features wasm
 
       - name: Set up Node
         uses: actions/setup-node@v4

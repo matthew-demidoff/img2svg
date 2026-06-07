@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { getWorker, useStore } from "../store";
+import { useStore } from "../store";
+import { renderPng } from "../lib/pipeline";
 
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -38,7 +39,7 @@ export function ExportButtons() {
     }
     setRendering(true);
     try {
-      const blob = await getWorker().renderPng(result.svg, stats.width, stats.height);
+      const blob = await renderPng(result.svg, stats.width, stats.height);
       download(blob, `${baseName(source.file)}.png`);
     } finally {
       setRendering(false);

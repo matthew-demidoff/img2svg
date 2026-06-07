@@ -1,10 +1,9 @@
 import { optimize, type Config } from "svgo/browser";
 
 // preset-default minus the id-affecting passes: layer groups carry stable ids
-// that the rest of the app (LayerPreview, stats) references, so they must
-// survive optimization untouched.
+// that the rest of the app references, so they must survive untouched.
 const config: Config = {
-  multipass: true,
+  multipass: false,
   floatPrecision: 2,
   plugins: [
     {
@@ -17,16 +16,12 @@ const config: Config = {
         },
       },
     },
-    "mergePaths",
-    "collapseGroups",
-    "removeMetadata",
   ],
 };
 
 export function optimizeSvg(svg: string): string {
   try {
-    const result = optimize(svg, config);
-    return result.data;
+    return optimize(svg, config).data;
   } catch {
     // A failed optimization should never break the trace; the unoptimized SVG
     // is still valid output.
