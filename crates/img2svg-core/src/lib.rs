@@ -54,15 +54,16 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
         return trace_bw(rgba, width, height);
     }
 
+    let effective = classify::effective_colors(rgba, width, height);
     let class = opts
         .class_override
-        .unwrap_or_else(|| classify::classify(rgba, width, height));
+        .unwrap_or_else(|| classify::classify(rgba, width, height, effective));
 
     let detail = opts.detail.clamp(0.0, 1.0);
     let cleaned = preclean::preclean(rgba, width, height, class, detail);
 
     let (colors, pixel_index) = emit::opaque_oklab(&cleaned);
-    let palette = build_palette(&colors, class, opts);
+    let palette = build_palette(&colors, class, opts, effective);
     let quantized = if palette.is_empty() {
         // Fully transparent image: nothing to quantize, trace as-is.
         cleaned.clone()
@@ -108,13 +109,23 @@ fn trace_bw(rgba: &[u8], width: u32, height: u32) -> Result<TraceResult, Error> 
     Ok(TraceResult { svg, stats })
 }
 
-fn build_palette(colors: &[oklab::Oklab], class: Class, opts: &Options) -> Vec<oklab::Oklab> {
+fn build_palette(
+    colors: &[oklab::Oklab],
+    class: Class,
+    opts: &Options,
+    effective: usize,
+) -> Vec<oklab::Oklab> {
     if let Some(locked) = &opts.lock_palette {
         return quantize::lock_to_palette(locked);
     }
-    // An explicit `k` is the colors control and wins outright; otherwise detail
-    // interpolates the per-class range.
-    let k = opts.k.unwrap_or_else(|| detail_k(class, opts.detail));
+    // An explicit `k` is the colors control and wins outright. Otherwise detail
+    // interpolates the per-class range, but never past the number of colors the
+    // image actually holds: over-quantizing a near-flat logo turns its
+    // anti-aliased edges into sliver layers that fragment the strokes.
+    let k = match opts.k {
+        Some(k) => k,
+        None => detail_k(class, opts.detail).min((effective.max(2)) as u16),
+    };
     quantize::quantize(colors, k)
 }
 

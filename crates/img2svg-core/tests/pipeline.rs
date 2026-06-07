@@ -189,6 +189,43 @@ fn detail_output_is_deterministic() {
 }
 
 #[test]
+fn near_flat_image_is_not_over_quantized() {
+    // Two solid colors with a thin seam of intermediate "anti-alias" pixels.
+    // The auto palette must stay near the two real colors instead of slicing the
+    // edge into many sliver layers (which fragments strokes on real logos).
+    let w = 40u32;
+    let h = 40u32;
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let c = if x < w / 2 {
+                [20u8, 20, 20]
+            } else {
+                [200u8, 160, 80]
+            };
+            rgba[i] = c[0];
+            rgba[i + 1] = c[1];
+            rgba[i + 2] = c[2];
+            rgba[i + 3] = 255;
+        }
+    }
+    // Stray midtone pixels along the seam, like an anti-aliased boundary.
+    for y in 0..h {
+        let i = ((y * w + (w / 2)) * 4) as usize;
+        rgba[i] = 110;
+        rgba[i + 1] = 90;
+        rgba[i + 2] = 50;
+    }
+    let result = trace(&rgba, w, h, &Options::default()).expect("trace");
+    assert!(
+        result.stats.palette.len() <= 4,
+        "near-flat image over-quantized to {} colors",
+        result.stats.palette.len()
+    );
+}
+
+#[test]
 fn explicit_k_sets_palette_size() {
     let rgba = three_band_image();
     // The image has three distinct colors, so K below that bounds the palette.
