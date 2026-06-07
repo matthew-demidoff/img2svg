@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store";
 import { renderPng } from "../lib/pipeline";
 import {
@@ -11,10 +11,12 @@ import {
   setVisible,
   solo,
   showAll,
+  type Layer,
   type LayerModel,
 } from "../lib/layers";
+import { useHistory } from "../lib/useHistory";
 import { PanZoom } from "./PanZoom";
-import { LayerRow } from "./editor/LayerRow";
+import { LayersPanel } from "./editor/LayersPanel";
 import { RetracePanel } from "./editor/RetracePanel";
 import { Variations } from "./editor/Variations";
 
@@ -35,25 +37,73 @@ function goHome() {
   window.location.hash = "#/";
 }
 
+const SHORTCUTS_HELP =
+  "Shortcuts: Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y redo, Esc to exit.";
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
+const EMPTY_MODEL: LayerModel = { width: 0, height: 0, shapes: [], layers: [] };
+
 export function Editor() {
   const result = useStore((s) => s.result);
   const source = useStore((s) => s.source);
   const status = useStore((s) => s.status);
 
-  const [model, setModel] = useState<LayerModel | null>(() =>
-    result ? parseLayers(result.svg) : null,
-  );
+  const history = useHistory<LayerModel>(result ? parseLayers(result.svg) : EMPTY_MODEL);
+  const { state: model, canUndo, canRedo, set: setModel, reset, undo, redo } = history;
   const [rendering, setRendering] = useState(false);
 
+  // Latest values the key handler reads without re-binding the listener.
+  const eyedropperOpen = useRef(false);
+  const actions = useRef({ undo, redo, canUndo, canRedo });
+  actions.current = { undo, redo, canUndo, canRedo };
+
   // Re-seed the editable model whenever the trace changes (re-trace, variation
-  // applied, new source). Edits live only in this local model.
+  // applied, new source). Re-seeding clears undo/redo: it's a new baseline.
   useEffect(() => {
-    setModel(result ? parseLayers(result.svg) : null);
-  }, [result?.svg]);
+    reset(result ? parseLayers(result.svg) : EMPTY_MODEL);
+  }, [result?.svg, reset]);
 
-  const svg = useMemo(() => (model ? serializeLayers(model) : ""), [model]);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (eyedropperOpen.current || isTypingTarget(e.target)) {
+        return;
+      }
+      if (e.key === "Escape") {
+        goHome();
+        return;
+      }
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) {
+        return;
+      }
+      const key = e.key.toLowerCase();
+      const { undo: doUndo, redo: doRedo, canUndo: u, canRedo: r } = actions.current;
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (u) {
+          doUndo();
+        }
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        if (r) {
+          doRedo();
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
-  if (!result || !model) {
+  const svg = useMemo(() => serializeLayers(model), [model]);
+
+  if (!result) {
     return (
       <div className="editor editor--empty">
         <p>No traced image to edit yet.</p>
@@ -71,9 +121,6 @@ export function Editor() {
   }
 
   async function downloadPng() {
-    if (!model) {
-      return;
-    }
     setRendering(true);
     try {
       const blob = await renderPng(svg, model.width, model.height);
@@ -84,7 +131,7 @@ export function Editor() {
   }
 
   function resetEdits() {
-    setModel(result ? parseLayers(result.svg) : null);
+    reset(result ? parseLayers(result.svg) : EMPTY_MODEL);
   }
 
   return (
@@ -97,8 +144,19 @@ export function Editor() {
 
       <aside className="editor__sidebar">
         <div className="editor__toolbar">
-          <button type="button" onClick={goHome}>
+          <button type="button" onClick={goHome} title="Exit (Esc)">
             Back
+          </button>
+          <button type="button" disabled={!canUndo} onClick={undo} title="Undo (Cmd/Ctrl+Z)">
+            Undo
+          </button>
+          <button
+            type="button"
+            disabled={!canRedo}
+            onClick={redo}
+            title="Redo (Cmd/Ctrl+Shift+Z)"
+          >
+            Redo
           </button>
           <button type="button" onClick={downloadSvg}>
             Download SVG
@@ -109,43 +167,31 @@ export function Editor() {
           <button type="button" onClick={resetEdits}>
             Reset edits
           </button>
+          <span className="editor__help" title={SHORTCUTS_HELP} aria-label={SHORTCUTS_HELP}>
+            ?
+          </span>
         </div>
 
         <RetracePanel />
         <Variations />
 
-        <div className="editor__layers">
-          <div className="editor__layers-header">
-            <span className="editor__section-title">Layers</span>
-            <button
-              type="button"
-              onClick={() => setModel((m) => (m ? showAll(m) : m))}
-              disabled={status === "processing"}
-            >
-              Show all
-            </button>
-          </div>
-          <ul className="editor__layers-list">
-            {model.layers.map((layer, index) => (
-              <LayerRow
-                key={layer.id}
-                layer={layer}
-                index={index}
-                total={model.layers.length}
-                others={model.layers.filter((l) => l.id !== layer.id)}
-                onRecolor={(color) => setModel((m) => (m ? recolor(m, layer.id, color) : m))}
-                onToggleVisible={() =>
-                  setModel((m) => (m ? setVisible(m, layer.id, !layer.visible) : m))
-                }
-                onSolo={() => setModel((m) => (m ? solo(m, layer.id) : m))}
-                onMoveUp={() => setModel((m) => (m ? reorder(m, layer.id, "up") : m))}
-                onMoveDown={() => setModel((m) => (m ? reorder(m, layer.id, "down") : m))}
-                onMerge={(intoId) => setModel((m) => (m ? merge(m, layer.id, intoId) : m))}
-                onDelete={() => setModel((m) => (m ? remove(m, layer.id) : m))}
-              />
-            ))}
-          </ul>
-        </div>
+        <LayersPanel
+          model={model}
+          disabled={status === "processing"}
+          onShowAll={() => setModel((m) => showAll(m))}
+          onRecolor={(id, color) => setModel((m) => recolor(m, id, color))}
+          onToggleVisible={(layer: Layer) =>
+            setModel((m) => setVisible(m, layer.id, !layer.visible))
+          }
+          onSolo={(id) => setModel((m) => solo(m, id))}
+          onMoveUp={(id) => setModel((m) => reorder(m, id, "up"))}
+          onMoveDown={(id) => setModel((m) => reorder(m, id, "down"))}
+          onMerge={(id, intoId) => setModel((m) => merge(m, id, intoId))}
+          onDelete={(id) => setModel((m) => remove(m, id))}
+          onEyeDropperState={(open) => {
+            eyedropperOpen.current = open;
+          }}
+        />
       </aside>
     </div>
   );

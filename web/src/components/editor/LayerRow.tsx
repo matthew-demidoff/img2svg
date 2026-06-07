@@ -5,6 +5,7 @@ interface LayerRowProps {
   layer: Layer;
   index: number;
   total: number;
+  canReorder: boolean;
   others: Layer[];
   onRecolor: (color: string) => void;
   onToggleVisible: () => void;
@@ -13,6 +14,7 @@ interface LayerRowProps {
   onMoveDown: () => void;
   onMerge: (intoId: string) => void;
   onDelete: () => void;
+  onEyeDropperState?: (open: boolean) => void;
 }
 
 const shapeWord = (n: number) => (n === 1 ? "shape" : "shapes");
@@ -21,6 +23,7 @@ export function LayerRow({
   layer,
   index,
   total,
+  canReorder,
   others,
   onRecolor,
   onToggleVisible,
@@ -29,6 +32,7 @@ export function LayerRow({
   onMoveDown,
   onMerge,
   onDelete,
+  onEyeDropperState,
 }: LayerRowProps) {
   const eyeDropper = getEyeDropper();
 
@@ -37,11 +41,14 @@ export function LayerRow({
     if (!Ctor) {
       return;
     }
+    onEyeDropperState?.(true);
     try {
       const { sRGBHex } = await new Ctor().open();
       onRecolor(sRGBHex.toLowerCase());
     } catch {
       // The user dismissed the picker; leave the color untouched.
+    } finally {
+      onEyeDropperState?.(false);
     }
   }
 
@@ -84,13 +91,18 @@ export function LayerRow({
         <button type="button" title="Show only this layer" onClick={onSolo}>
           Solo
         </button>
-        <button type="button" title="Move up" disabled={index === 0} onClick={onMoveUp}>
+        <button
+          type="button"
+          title={canReorder ? "Move up" : 'Reorder needs "Original order" with no filter'}
+          disabled={!canReorder || index === 0}
+          onClick={onMoveUp}
+        >
           ↑
         </button>
         <button
           type="button"
-          title="Move down"
-          disabled={index === total - 1}
+          title={canReorder ? "Move down" : 'Reorder needs "Original order" with no filter'}
+          disabled={!canReorder || index === total - 1}
           onClick={onMoveDown}
         >
           ↓

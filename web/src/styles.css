@@ -621,6 +621,50 @@ body {
   color: var(--muted);
 }
 
+.editor__help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  align-self: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: help;
+}
+
+.editor__layers-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.editor__layers-search {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.editor__layers-sort {
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.editor__layers-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .editor__layers-list {
   list-style: none;
   margin: 0;
@@ -628,6 +672,28 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  max-height: clamp(180px, 48vh, 560px);
+  overflow-y: auto;
+}
+
+.editor__layers-more {
+  display: flex;
+}
+
+.editor__layers-more button {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.editor__layers-more button:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .lrow {
