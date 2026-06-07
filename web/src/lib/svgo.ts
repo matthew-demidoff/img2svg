@@ -13,6 +13,10 @@ const config: Config = {
           cleanupIds: false,
           convertPathData: { floatPrecision: 2 },
           cleanupNumericValues: { floatPrecision: 2 },
+          // Keep fills as #rrggbb so the layer model and recolor stay reliable.
+          convertColors: false,
+          // Keep the viewBox so the preview can scale to fit its box.
+          removeViewBox: false,
         },
       },
     },

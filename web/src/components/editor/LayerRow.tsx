@@ -69,7 +69,7 @@ export function LayerRow({
       </div>
 
       <span className="lrow__count">
-        {layer.shapes.length} {shapeWord(layer.shapes.length)}
+        {layer.count} {shapeWord(layer.count)}
       </span>
 
       <div className="lrow__actions">

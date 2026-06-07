@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 
-const MIN_SCALE = 1;
+const MIN_SCALE = 0.1;
+const FIT_SCALE = 1;
 const MAX_SCALE = 16;
 const BUTTON_STEP = 1.4;
 const DBLCLICK_SCALE = 3;
@@ -151,7 +152,7 @@ export function PanZoom({ children }: { children: ReactNode }) {
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const { fx, fy } = focal(e.clientX, e.clientY);
       setT((prev) => {
-        const target = prev.scale > MIN_SCALE + 0.01 ? MIN_SCALE : DBLCLICK_SCALE;
+        const target = prev.scale > FIT_SCALE + 0.01 ? FIT_SCALE : DBLCLICK_SCALE;
         return applyZoom(prev, target, fx, fy, dims());
       });
     },
@@ -171,12 +172,12 @@ export function PanZoom({ children }: { children: ReactNode }) {
     () =>
       setT(() => {
         const d = dims();
-        return { scale: 1, x: fitOffset(0, d.cw, d.vw), y: fitOffset(0, d.ch, d.vh) };
+        return { scale: FIT_SCALE, x: fitOffset(0, d.cw, d.vw), y: fitOffset(0, d.ch, d.vh) };
       }),
     [dims],
   );
 
-  const grab = t.scale > MIN_SCALE + 0.001;
+  const grab = t.scale > FIT_SCALE + 0.001;
 
   return (
     <div className="panzoom">

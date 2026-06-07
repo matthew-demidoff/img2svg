@@ -33,11 +33,20 @@ function layersFromSvg(svg: string): LayerInfo[] {
   }));
 }
 
+// VTracer emits width/height but no viewBox; add one so the preview can scale
+// to fit its box (the default preserveAspectRatio contains the image).
+function ensureViewBox(svg: string, width: number, height: number): string {
+  if (/\sviewBox=/.test(svg)) {
+    return svg;
+  }
+  return svg.replace(/<svg\b/, `<svg viewBox="0 0 ${width} ${height}"`);
+}
+
 export async function runTrace(file: File, opts: Options): Promise<TraceResult> {
   const { rgba, width, height } = await decode(file);
   const core = await traceRaw(rgba, width, height, toCoreOptions(opts));
   return {
-    svg: optimizeSvg(core.svg),
+    svg: ensureViewBox(optimizeSvg(core.svg), width, height),
     stats: {
       detectedClass: core.stats.classified_as.toLowerCase() as ImageClass,
       pathCount: core.stats.path_count,
