@@ -34,6 +34,9 @@ pub struct Options {
     pub photo_mode: PhotoMode,
     /// Detail bias in [0,1]. Higher keeps more small regions and corners.
     pub detail: f32,
+    /// Detect a near-linear color ramp and emit one SVG linear gradient instead
+    /// of banding it. Prototype, whole-image scope; off by default.
+    pub gradients: bool,
 }
 
 impl Default for Options {
@@ -45,6 +48,7 @@ impl Default for Options {
             bw_mode: false,
             photo_mode: PhotoMode::Posterize,
             detail: 0.5,
+            gradients: false,
         }
     }
 }

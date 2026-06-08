@@ -62,6 +62,25 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
     let detail = opts.detail.clamp(0.0, 1.0);
     let cleaned = preclean::preclean(rgba, width, height, class, detail);
 
+    // Prototype gradient pre-pass: if the whole opaque image is a near-linear
+    // ramp, emit one linear gradient instead of letting the quantizer band it.
+    // Conservative gates mean a flat/textured image falls through to the trace.
+    if opts.gradients {
+        if let Some(fit) = gradient::detect_linear(&cleaned, width, height) {
+            let svg = gradient::emit_svg(&fit, width, height);
+            let est_bytes = svg.len();
+            return Ok(TraceResult {
+                svg,
+                stats: Stats {
+                    path_count: 1,
+                    palette: gradient::palette_hex(&fit),
+                    classified_as: class,
+                    est_bytes,
+                },
+            });
+        }
+    }
+
     let (colors, pixel_index) = emit::opaque_oklab(&cleaned);
     let palette = build_palette(&colors, class, opts, effective);
     let quantized = if palette.is_empty() {

@@ -226,6 +226,60 @@ fn near_flat_image_is_not_over_quantized() {
 }
 
 #[test]
+fn linear_ramp_becomes_one_gradient() {
+    // Horizontal black -> white ramp.
+    let w = 64u32;
+    let h = 16u32;
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let v = (x * 255 / (w - 1)) as u8;
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = v;
+            rgba[i + 1] = v;
+            rgba[i + 2] = v;
+            rgba[i + 3] = 255;
+        }
+    }
+    let opts = Options {
+        gradients: true,
+        ..Options::default()
+    };
+    let on = trace(&rgba, w, h, &opts).expect("trace");
+    assert!(
+        on.svg.contains("<linearGradient"),
+        "a ramp should become one linear gradient"
+    );
+    assert_eq!(
+        on.svg.matches("<rect").count(),
+        1,
+        "the gradient output is a single rect"
+    );
+    // Same input, flag off: traces normally with no gradient.
+    let off = trace(&rgba, w, h, &Options::default()).expect("trace");
+    assert!(
+        !off.svg.contains("linearGradient"),
+        "no gradient unless the flag is on"
+    );
+}
+
+#[test]
+fn hard_color_bands_are_not_a_gradient() {
+    // Red/green/blue bands are not collinear in OKLab; the residual gate must
+    // reject them so they stay flat bands rather than becoming a smooth ramp.
+    let rgba = three_band_image();
+    let opts = Options {
+        gradients: true,
+        ..Options::default()
+    };
+    let r = trace(&rgba, W, H, &opts).expect("trace");
+    assert!(
+        !r.svg.contains("linearGradient"),
+        "hard color bands must not be fit as a gradient"
+    );
+}
+
+#[test]
 fn explicit_k_sets_palette_size() {
     let rgba = three_band_image();
     // The image has three distinct colors, so K below that bounds the palette.
