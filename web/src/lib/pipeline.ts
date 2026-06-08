@@ -15,6 +15,7 @@ function toCoreOptions(o: Options): Record<string, unknown> {
     bw_mode: o.blackAndWhite,
     photo_mode: "Posterize",
     detail: o.fidelity,
+    gradients: o.gradients,
   };
 }
 

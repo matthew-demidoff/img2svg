@@ -24,6 +24,8 @@ export interface Options {
   photoMode: PhotoMode;
   /** Collapse to a single ink color on a transparent background. */
   blackAndWhite: boolean;
+  /** Detect smooth color ramps and emit SVG gradients instead of color bands. */
+  gradients: boolean;
 }
 
 export interface LayerInfo {
@@ -59,4 +61,5 @@ export const defaultOptions: Options = {
   lockToSourcePalette: false,
   photoMode: "posterize",
   blackAndWhite: false,
+  gradients: false,
 };

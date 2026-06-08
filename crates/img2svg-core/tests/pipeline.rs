@@ -248,12 +248,13 @@ fn linear_ramp_becomes_one_gradient() {
     let on = trace(&rgba, w, h, &opts).expect("trace");
     assert!(
         on.svg.contains("<linearGradient"),
-        "a ramp should become one linear gradient"
+        "a ramp should become a linear gradient"
     );
-    assert_eq!(
-        on.svg.matches("<rect").count(),
-        1,
-        "the gradient output is a single rect"
+    // The gradient is composited as a region path filled with the gradient,
+    // spliced under the flat trace (no whole-image rect anymore).
+    assert!(
+        on.svg.contains("fill=\"url(#g0)\""),
+        "the gradient should fill a region path"
     );
     // Same input, flag off: traces normally with no gradient.
     let off = trace(&rgba, w, h, &Options::default()).expect("trace");
@@ -311,5 +312,142 @@ fn explicit_k_overrides_detail() {
         result.stats.palette.len() <= 4,
         "palette {} exceeded explicit k=4",
         result.stats.palette.len()
+    );
+}
+
+const G: u32 = 96;
+
+/// A solid background with a centered disc whose interior is a gentle horizontal
+/// color ramp (a mid-tone so OKLab's steep dark end is avoided). The disc is the
+/// only gradient region; the background must still trace as flat paths. This
+/// exercises per-region scope: a partial-image gradient is detected without
+/// turning the whole image into one gradient.
+fn gradient_disc_image() -> Vec<u8> {
+    let bg = [235u8, 235, 235];
+    let cx = (G / 2) as f32;
+    let cy = (G / 2) as f32;
+    let r = 36.0f32;
+    let mut rgba = vec![0u8; (G * G * 4) as usize];
+    for y in 0..G {
+        for x in 0..G {
+            let i = ((y * G + x) * 4) as usize;
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let color = if dx * dx + dy * dy <= r * r {
+                // Horizontal ramp across the disc, blue-ish, mid lightness.
+                let t = ((x as f32 - (cx - r)) / (2.0 * r)).clamp(0.0, 1.0);
+                let v = (70.0 + t * 140.0) as u8;
+                [v, (v as u16 * 3 / 4) as u8, 200]
+            } else {
+                bg
+            };
+            rgba[i] = color[0];
+            rgba[i + 1] = color[1];
+            rgba[i + 2] = color[2];
+            rgba[i + 3] = 255;
+        }
+    }
+    rgba
+}
+
+#[test]
+fn gradient_region_detected_under_flat_trace() {
+    let rgba = gradient_disc_image();
+    let opts = Options {
+        gradients: true,
+        ..Options::default()
+    };
+    let on = trace(&rgba, G, G, &opts).expect("trace");
+    assert!(
+        on.svg.contains("<linearGradient"),
+        "the disc ramp should be detected as a region gradient"
+    );
+    assert!(
+        on.svg.contains("fill=\"url(#g0)\""),
+        "the gradient should fill a traced region path"
+    );
+    // Region scope, not whole-image: the flat background must still produce
+    // ordinary flat paths.
+    assert!(
+        on.svg.contains("<path") && !on.svg.contains("<rect"),
+        "the background must still trace as flat paths, not a whole-image rect"
+    );
+
+    // The gradient fragments must sit inside the SVG root (after the `<svg>`
+    // open, before `</svg>`), or they would not render.
+    let svg_at = on.svg.find("<svg").expect("svg open tag");
+    let defs_at = on.svg.find("<defs>").expect("gradient defs");
+    let close_at = on.svg.find("</svg>").expect("svg close tag");
+    assert!(
+        svg_at < defs_at && defs_at < close_at,
+        "gradient defs must be spliced inside the svg root"
+    );
+
+    // Flag off: byte-identical to a normal trace, no gradient at all.
+    let off = trace(&rgba, G, G, &Options::default()).expect("trace off");
+    assert!(!off.svg.contains("linearGradient"));
+}
+
+#[test]
+fn gradient_regions_are_deterministic() {
+    let rgba = gradient_disc_image();
+    let opts = Options {
+        gradients: true,
+        ..Options::default()
+    };
+    let a = trace(&rgba, G, G, &opts).expect("trace a");
+    let b = trace(&rgba, G, G, &opts).expect("trace b");
+    assert_eq!(
+        a.svg, b.svg,
+        "region-gradient svg must be byte-identical across runs"
+    );
+    assert_eq!(a.stats.palette, b.stats.palette);
+    assert_eq!(a.stats.path_count, b.stats.path_count);
+}
+
+#[test]
+fn flat_inputs_produce_no_region_gradient() {
+    let opts = Options {
+        gradients: true,
+        ..Options::default()
+    };
+    // Hard color bands: not collinear in OKLab, must stay flat bands.
+    let bands = three_band_image();
+    let r = trace(&bands, W, H, &opts).expect("trace bands");
+    assert!(
+        !r.svg.contains("linearGradient"),
+        "hard color bands must not become a gradient"
+    );
+
+    // A near-flat two-color image: no ramp to fit.
+    let w = 40u32;
+    let h = 40u32;
+    let mut flat = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let c = if x < w / 2 {
+                [20u8, 20, 20]
+            } else {
+                [200u8, 160, 80]
+            };
+            flat[i] = c[0];
+            flat[i + 1] = c[1];
+            flat[i + 2] = c[2];
+            flat[i + 3] = 255;
+        }
+    }
+    let nf = trace(&flat, w, h, &opts).expect("trace near-flat");
+    assert!(
+        !nf.svg.contains("linearGradient"),
+        "a near-flat image must not become a gradient"
+    );
+
+    // A small flat-color logo-like mark on a flat field: no smooth ramp anywhere.
+    let logo = fine_feature_image();
+    let lg = trace(&logo, M, M, &opts).expect("trace logo");
+    assert!(
+        !lg.svg.contains("linearGradient"),
+        "flat logo-like art must not become a gradient"
     );
 }

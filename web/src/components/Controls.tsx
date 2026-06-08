@@ -87,6 +87,15 @@ export function Controls() {
         />
         <span>Black and white</span>
       </label>
+
+      <label className="control control--toggle">
+        <input
+          type="checkbox"
+          checked={options.gradients}
+          onChange={(e) => setOptions({ gradients: e.target.checked })}
+        />
+        <span>Detect gradients</span>
+      </label>
     </fieldset>
   );
 }

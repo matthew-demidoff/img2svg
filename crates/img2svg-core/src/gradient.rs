@@ -1,21 +1,24 @@
-//! Linear gradient detection (prototype, behind `Options.gradients`).
+//! Linear gradient fitting (behind `Options.gradients`).
 //!
-//! When the opaque image is one smooth, near-linear color ramp, emit a single
-//! `<linearGradient>`-filled rect instead of letting the quantizer shatter it
-//! into many flat bands. Scope is whole-image for now; per-region detection and
-//! a contour tracer (for non-rectangular gradient regions) are later phases.
+//! Given a set of opaque pixels (a region segmented by color), decide whether
+//! they form one smooth, near-linear color ramp and, if so, fit a
+//! `<linearGradient>` instead of letting the quantizer shatter the ramp into
+//! many flat bands. The caller (`lib::gradient_prepass`) supplies one pixel set
+//! per region and composites the accepted gradients under the flat trace.
 //!
 //! The gates are deliberately conservative: anything that is not clearly a
 //! near-linear ramp falls through to the normal flat trace, so enabling this can
-//! only replace banding with a gradient, never make a flat/textured image worse.
-//! The key gate is the residual of pixels against the straight endpoint-to-
-//! endpoint line in OKLab, which rejects multi-hue band stacks (red|green|blue)
-//! whose colors are not collinear.
+//! only replace banding with a gradient, never make a flat/textured region
+//! worse. The key gate is the residual of pixels against the straight endpoint-
+//! to-endpoint line in OKLab, which rejects multi-hue band stacks
+//! (red|green|blue) whose colors are not collinear.
 
-use crate::oklab::{oklab_to_srgb, srgb_to_oklab, Oklab};
+use crate::oklab::{oklab_to_srgb, Oklab};
 
-const MIN_PIXELS: usize = 1024;
-const MAX_TRANSPARENT_FRAC: f32 = 0.02;
+/// Minimum samples for a stable least-squares axis and binned profile. The
+/// region-area gate in the caller is the real size floor; this only guards the
+/// fit math against a handful of pixels.
+const MIN_PIXELS: usize = 256;
 /// Below this OKLab range on every channel the region is flat, not a gradient.
 const FLAT_RANGE: f32 = 0.02;
 /// Max RMS deviation (OKLab) of pixels from the straight endpoint line. Keeps us
@@ -39,49 +42,26 @@ pub struct LinearFit {
     pub stops: Vec<(f32, [u8; 3])>,
 }
 
-/// Try to fit the whole opaque image as one linear gradient. Returns `None`
-/// (meaning "trace normally") unless the image is clearly a near-linear ramp.
-pub fn detect_linear(rgba: &[u8], width: u32, height: u32) -> Option<LinearFit> {
-    let w = width as usize;
-    let h = height as usize;
-    let total = w * h;
-    if total == 0 {
+/// Fit an opaque pixel set as one linear gradient via a per-channel
+/// least-squares axis, a binned OKLab profile along it, smoothness/residual
+/// gates, and greedy stop insertion. Returns `None` (meaning "do not treat this
+/// region as a gradient") unless the set is clearly a near-linear ramp.
+/// `positions` are raw pixel coords parallel to `colors` (OKLab).
+pub fn detect_linear_pixels(positions: &[(f32, f32)], colors: &[Oklab]) -> Option<LinearFit> {
+    let n = colors.len();
+    if n != positions.len() || n < MIN_PIXELS {
         return None;
     }
-
-    // Opaque pixels as parallel (x, y, OKLab). Partial alpha disqualifies a cell;
-    // a mostly-transparent image needs region+contour support (a later phase).
-    let mut xs: Vec<f32> = Vec::new();
-    let mut ys: Vec<f32> = Vec::new();
-    let mut cs: Vec<Oklab> = Vec::new();
-    let mut transparent = 0usize;
-    for y in 0..h {
-        for x in 0..w {
-            let i = (y * w + x) * 4;
-            if rgba[i + 3] < 250 {
-                transparent += 1;
-                continue;
-            }
-            xs.push(x as f32);
-            ys.push(y as f32);
-            cs.push(srgb_to_oklab(
-                rgba[i] as f32 / 255.0,
-                rgba[i + 1] as f32 / 255.0,
-                rgba[i + 2] as f32 / 255.0,
-            ));
-        }
-    }
-    let n = cs.len();
-    if n < MIN_PIXELS || (transparent as f32) > MAX_TRANSPARENT_FRAC * total as f32 {
-        return None;
-    }
+    let xs: Vec<f32> = positions.iter().map(|p| p.0).collect();
+    let ys: Vec<f32> = positions.iter().map(|p| p.1).collect();
+    let cs = colors;
     let nf = n as f32;
 
     // Per-channel range (flat gate).
     let (mut lmin, mut lmax) = (f32::INFINITY, f32::NEG_INFINITY);
     let (mut amin, mut amax) = (f32::INFINITY, f32::NEG_INFINITY);
     let (mut bmin, mut bmax) = (f32::INFINITY, f32::NEG_INFINITY);
-    for c in &cs {
+    for c in cs {
         lmin = lmin.min(c.l);
         lmax = lmax.max(c.l);
         amin = amin.min(c.a);
@@ -327,26 +307,31 @@ fn oklab_to_u8(c: &Oklab) -> [u8; 3] {
     ]
 }
 
-/// A standalone SVG of one gradient-filled rect covering the whole image.
-pub fn emit_svg(fit: &LinearFit, width: u32, height: u32) -> String {
-    let stops: String = fit
-        .stops
+/// The `<stop>` list for a fit.
+fn stop_elements(fit: &LinearFit) -> String {
+    fit.stops
         .iter()
         .map(|(off, [r, g, b])| {
             format!("<stop offset=\"{off:.3}\" stop-color=\"#{r:02x}{g:02x}{b:02x}\"/>")
         })
-        .collect();
-    format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">\
-<defs><linearGradient id=\"g0\" gradientUnits=\"userSpaceOnUse\" x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\">{stops}</linearGradient></defs>\
-<rect width=\"{w}\" height=\"{h}\" fill=\"url(#g0)\"/></svg>",
-        w = width,
-        h = height,
+        .collect()
+}
+
+/// Emit a per-region gradient as two fragments to splice into a VTracer SVG: the
+/// `<linearGradient>` def (keyed by `id`, `userSpaceOnUse` so its coords are raw
+/// pixels) and a `<path>` filled with it. The path is filled `fill-rule="evenodd"`
+/// so any holes in `path_d` are cut. Returns `(defs, path)`.
+pub fn emit_defs_and_path(fit: &LinearFit, id: &str, path_d: &str) -> (String, String) {
+    let stops = stop_elements(fit);
+    let defs = format!(
+        "<linearGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\">{stops}</linearGradient>",
         x1 = fit.p0.0,
         y1 = fit.p0.1,
         x2 = fit.p1.0,
         y2 = fit.p1.1,
-    )
+    );
+    let path = format!("<path d=\"{path_d}\" fill=\"url(#{id})\" fill-rule=\"evenodd\"/>");
+    (defs, path)
 }
 
 pub fn palette_hex(fit: &LinearFit) -> Vec<String> {

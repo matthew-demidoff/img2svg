@@ -34,8 +34,9 @@ pub struct Options {
     pub photo_mode: PhotoMode,
     /// Detail bias in [0,1]. Higher keeps more small regions and corners.
     pub detail: f32,
-    /// Detect a near-linear color ramp and emit one SVG linear gradient instead
-    /// of banding it. Prototype, whole-image scope; off by default.
+    /// Detect smooth, near-linear color ramps per region and emit SVG linear
+    /// gradients (composited under the flat trace) instead of banding them.
+    /// Off by default; when off, output is byte-identical to a normal trace.
     pub gradients: bool,
 }
 

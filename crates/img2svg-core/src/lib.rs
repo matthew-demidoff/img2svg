@@ -6,6 +6,7 @@
 //! tracer itself.
 
 mod classify;
+mod contour;
 mod emit;
 mod error;
 mod gradient;
@@ -15,6 +16,7 @@ mod options;
 mod preclean;
 mod quantize;
 mod regions;
+mod segment;
 mod trace;
 
 pub use emit::Stats;
@@ -30,6 +32,16 @@ use serde::{Deserialize, Serialize};
 const LOGO_K_RANGE: (u16, u16) = (2, 16);
 const ILLUSTRATION_K_RANGE: (u16, u16) = (8, 64);
 const PHOTO_K_RANGE: (u16, u16) = (24, 256);
+
+/// A segmented component must cover at least this fraction of the opaque pixels
+/// to be considered for a gradient fit, with an absolute floor. Smaller blobs
+/// are not worth a gradient and trace cleanly as flat regions.
+const MIN_REGION_AREA_FRAC: f32 = 0.02;
+const MIN_REGION_AREA_FLOOR: usize = 256;
+
+/// Dilation applied to an accepted gradient region before tracing its outline,
+/// so the gradient bleeds ~1px under the flat trace and leaves no seam.
+const GRADIENT_BLEED_PX: usize = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceResult {
@@ -62,42 +74,42 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
     let detail = opts.detail.clamp(0.0, 1.0);
     let cleaned = preclean::preclean(rgba, width, height, class, detail);
 
-    // Prototype gradient pre-pass: if the whole opaque image is a near-linear
-    // ramp, emit one linear gradient instead of letting the quantizer band it.
-    // Conservative gates mean a flat/textured image falls through to the trace.
-    if opts.gradients {
-        if let Some(fit) = gradient::detect_linear(&cleaned, width, height) {
-            let svg = gradient::emit_svg(&fit, width, height);
-            let est_bytes = svg.len();
-            return Ok(TraceResult {
-                svg,
-                stats: Stats {
-                    path_count: 1,
-                    palette: gradient::palette_hex(&fit),
-                    classified_as: class,
-                    est_bytes,
-                },
-            });
-        }
-    }
+    // Per-region gradient pre-pass: segment by color, fit each large region as a
+    // linear gradient, and punch those regions out of the buffer so the flat
+    // trace skips them. The gradients composite underneath. Conservative gates
+    // mean a flat/textured region falls through and traces normally; if nothing
+    // is accepted, the pre-pass returns `None` and behavior is unchanged.
+    let prepass = if opts.gradients {
+        gradient_prepass(&cleaned, width, height)
+    } else {
+        None
+    };
+    let trace_buffer = match &prepass {
+        Some(p) => &p.holed,
+        None => &cleaned,
+    };
 
-    let (colors, pixel_index) = emit::opaque_oklab(&cleaned);
+    let (colors, pixel_index) = emit::opaque_oklab(trace_buffer);
     let palette = build_palette(&colors, class, opts, effective);
     let quantized = if palette.is_empty() {
-        // Fully transparent image: nothing to quantize, trace as-is.
-        cleaned.clone()
+        // Nothing opaque left to quantize (fully transparent, or every opaque
+        // pixel was claimed by a gradient region): trace the buffer as-is.
+        trace_buffer.clone()
     } else {
         let assignment = quantize::map_to_palette(&palette, &colors);
+        // Despeckle reads alpha from `rgba`, but a holed gradient pixel is
+        // transparent in `trace_buffer` while opaque in `rgba`. Gradient pixels
+        // never appear in `pixel_index`, so they are never read back here.
         let assignment = despeckle_assignment(
             &assignment,
             &pixel_index,
             width,
             height,
             palette.len(),
-            rgba,
+            trace_buffer,
             detail,
         );
-        emit::apply_palette(&cleaned, &palette, &pixel_index, &assignment)
+        emit::apply_palette(trace_buffer, &palette, &pixel_index, &assignment)
     };
 
     // Ordering is computed for the seam-avoidance contract; VTracer's stacked
@@ -107,14 +119,141 @@ pub fn trace(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<Tra
         palette.len().max(1),
     );
 
-    let svg = trace::trace_color(&quantized, width, height, class, detail)?;
+    let flat_svg = trace::trace_color(&quantized, width, height, class, detail)?;
+    let (svg, gradient_paths, mut gradient_palette) = match &prepass {
+        Some(p) => {
+            let composited = splice_gradients(&flat_svg, &p.defs, &p.paths);
+            (composited, p.paths.len(), p.stop_hex.clone())
+        }
+        None => (flat_svg, 0, Vec::new()),
+    };
+
+    let mut palette_hex = emit::palette_hex(&palette);
+    palette_hex.append(&mut gradient_palette);
     let stats = Stats {
-        path_count: emit::count_paths(&svg),
-        palette: emit::palette_hex(&palette),
+        path_count: emit::count_paths(&svg) + gradient_paths,
+        palette: palette_hex,
         classified_as: class,
         est_bytes: svg.len(),
     };
     Ok(TraceResult { svg, stats })
+}
+
+/// Result of the per-region gradient pre-pass.
+struct GradientPrepass {
+    /// A copy of the cleaned buffer with every accepted-region pixel set to
+    /// alpha 0, so the quantize + trace path leaves those areas empty.
+    holed: Vec<u8>,
+    /// Combined `<linearGradient>` defs for the accepted regions.
+    defs: String,
+    /// One `<path>` per accepted region, in emit order.
+    paths: Vec<String>,
+    /// Stop colors of every accepted gradient, for the palette stat.
+    stop_hex: Vec<String>,
+}
+
+/// Segment `cleaned` by color, fit each large region as a linear gradient, and
+/// build the holed buffer + SVG fragments. Returns `None` if no region is
+/// accepted, so the caller traces exactly as it would with gradients off.
+fn gradient_prepass(cleaned: &[u8], width: u32, height: u32) -> Option<GradientPrepass> {
+    let w = width as usize;
+    let h = height as usize;
+    let total = w * h;
+
+    let opaque: usize = cleaned.chunks_exact(4).filter(|px| px[3] != 0).count();
+    if opaque == 0 {
+        return None;
+    }
+    let min_area = ((opaque as f32 * MIN_REGION_AREA_FRAC) as usize).max(MIN_REGION_AREA_FLOOR);
+
+    let components = segment::segment(cleaned, width, height, segment::SEG_THRESHOLD);
+    let mut holed = cleaned.to_vec();
+    let mut defs = String::new();
+    let mut paths: Vec<String> = Vec::new();
+    let mut stop_hex: Vec<String> = Vec::new();
+
+    for component in &components {
+        if component.len() < min_area {
+            continue;
+        }
+        let mut positions: Vec<(f32, f32)> = Vec::with_capacity(component.len());
+        let mut colors: Vec<oklab::Oklab> = Vec::with_capacity(component.len());
+        for &i in component {
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let base = i * 4;
+            positions.push((x, y));
+            colors.push(oklab::srgb_to_oklab(
+                cleaned[base] as f32 / 255.0,
+                cleaned[base + 1] as f32 / 255.0,
+                cleaned[base + 2] as f32 / 255.0,
+            ));
+        }
+        let Some(fit) = gradient::detect_linear_pixels(&positions, &colors) else {
+            continue;
+        };
+
+        // Dilate the region ~1px so the gradient bleeds under the flat trace and
+        // leaves no seam, then trace that mask into a path.
+        let mut mask = vec![false; total];
+        for &i in component {
+            mask[i] = true;
+        }
+        let bled = contour::dilate(&mask, width, height, GRADIENT_BLEED_PX);
+        let path_d = contour::trace_mask(&bled, width, height);
+        if path_d.is_empty() {
+            continue;
+        }
+
+        let id = format!("g{}", paths.len());
+        let (def, path) = gradient::emit_defs_and_path(&fit, &id, &path_d);
+        defs.push_str(&def);
+        paths.push(path);
+        stop_hex.extend(gradient::palette_hex(&fit));
+
+        // Punch the dilated region out of the buffer so the flat trace skips it.
+        for (i, &covered) in bled.iter().enumerate() {
+            if covered {
+                holed[i * 4 + 3] = 0;
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        return None;
+    }
+    Some(GradientPrepass {
+        holed,
+        defs,
+        paths,
+        stop_hex,
+    })
+}
+
+/// Splice gradient `defs` and `paths` immediately after the VTracer `<svg ...>`
+/// open tag so the gradients render underneath the flat paths (which overlap any
+/// 1px seam). VTracer emits raw pixel coords with no viewBox, matching the
+/// gradients' userSpaceOnUse geometry, so no transform is needed. The insertion
+/// point is the end of the `<svg` tag (not the `<?xml?>` declaration before it),
+/// so the fragments land inside the SVG root.
+fn splice_gradients(flat_svg: &str, defs: &str, paths: &[String]) -> String {
+    let Some(svg_tag) = flat_svg.find("<svg") else {
+        return flat_svg.to_string();
+    };
+    let Some(rel_end) = flat_svg[svg_tag..].find('>') else {
+        return flat_svg.to_string();
+    };
+    let insert_at = svg_tag + rel_end + 1;
+    let mut out = String::with_capacity(flat_svg.len() + defs.len() + 64);
+    out.push_str(&flat_svg[..insert_at]);
+    out.push_str("<defs>");
+    out.push_str(defs);
+    out.push_str("</defs>");
+    for path in paths {
+        out.push_str(path);
+    }
+    out.push_str(&flat_svg[insert_at..]);
+    out
 }
 
 fn trace_bw(rgba: &[u8], width: u32, height: u32) -> Result<TraceResult, Error> {
